@@ -18,13 +18,69 @@ namespace PowerDocu.Common
         protected readonly Random random = new Random();
 
         // ------------------------------------------------------------------
+        // Branding
+        // ------------------------------------------------------------------
+
+        /// <summary>
+        /// Branding applied to every generated HTML page. Set once per documentation
+        /// run via <see cref="ApplyBranding"/> before any HTML is generated; every
+        /// <c>&lt;X&gt;HtmlBuilder</c> subclass picks it up automatically through the
+        /// single shared <see cref="WrapInHtmlPage"/> choke point, so no subclass needs
+        /// to know about branding itself. Defaults reproduce the stock PowerDocu look.
+        /// </summary>
+        private static string BrandAccentColor = "#0078d4";
+        private static string BrandAccentColorDark = "#005a9e";
+        private static string BrandSidebarColor = "#1e1e2e";
+        private static string BrandName = "Solutions Docs";
+        private static string BrandLogoDataUri = null;
+
+        /// <summary>
+        /// Applies branding config for the current documentation run. The logo (if any)
+        /// is read once and embedded as a base64 data URI, so every generated page can
+        /// reference it without needing a relative file path — output folders are nested
+        /// at varying depths (solution root, component folders, per-action subfolders),
+        /// which would otherwise make a single logo file awkward to link to consistently.
+        /// </summary>
+        public static void ApplyBranding(ConfigHelper config)
+        {
+            if (config == null) return;
+            BrandAccentColor = string.IsNullOrEmpty(config.brandAccentColor) ? "#0078d4" : config.brandAccentColor;
+            BrandAccentColorDark = string.IsNullOrEmpty(config.brandAccentColorDark) ? "#005a9e" : config.brandAccentColorDark;
+            BrandSidebarColor = string.IsNullOrEmpty(config.brandSidebarColor) ? "#1e1e2e" : config.brandSidebarColor;
+            BrandName = string.IsNullOrEmpty(config.brandName) ? "Solutions Docs" : config.brandName;
+            BrandLogoDataUri = null;
+            if (!string.IsNullOrEmpty(config.brandLogoPath) && File.Exists(config.brandLogoPath))
+            {
+                string mimeType = Path.GetExtension(config.brandLogoPath).ToLowerInvariant() switch
+                {
+                    ".png" => "image/png",
+                    ".jpg" or ".jpeg" => "image/jpeg",
+                    ".gif" => "image/gif",
+                    ".svg" => "image/svg+xml",
+                    ".webp" => "image/webp",
+                    _ => null
+                };
+                if (mimeType != null)
+                {
+                    BrandLogoDataUri = $"data:{mimeType};base64,{ImageHelper.GetBase64(config.brandLogoPath)}";
+                }
+                else
+                {
+                    NotificationHelper.SendNotification($"Brand logo '{config.brandLogoPath}' has an unsupported extension; skipping logo.");
+                }
+            }
+        }
+
+        // ------------------------------------------------------------------
         // Template helpers
         // ------------------------------------------------------------------
 
         /// <summary>
         /// Returns the full HTML page wrapping the given body content.
         /// A &lt;link&gt; to <c>style.css</c> is included so that users can
-        /// swap the stylesheet to change the design.
+        /// swap the stylesheet to change the design. Branding (colors/logo)
+        /// is applied via inline CSS variable overrides and an optional
+        /// embedded logo, driven by <see cref="ApplyBranding"/>.
         /// </summary>
         protected string WrapInHtmlPage(string title, string bodyContent, string navigationHtml, string cssRelativePath = "style.css")
         {
@@ -36,10 +92,30 @@ namespace PowerDocu.Common
             sb.AppendLine("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">");
             sb.AppendLine($"  <title>{Encode(title)}</title>");
             sb.AppendLine($"  <link rel=\"stylesheet\" href=\"{cssRelativePath}\">");
+            sb.AppendLine("  <style>");
+            sb.AppendLine("    :root {");
+            sb.AppendLine($"      --color-primary: {BrandAccentColor};");
+            sb.AppendLine($"      --color-primary-dark: {BrandAccentColorDark};");
+            sb.AppendLine($"      --color-sidebar: {BrandSidebarColor};");
+            sb.AppendLine("    }");
+            sb.AppendLine("  </style>");
             sb.AppendLine("</head>");
             sb.AppendLine("<body>");
             sb.AppendLine("<div class=\"page-wrapper\">");
             sb.AppendLine("  <nav class=\"sidebar\">");
+            if (!string.IsNullOrEmpty(BrandLogoDataUri) || !string.IsNullOrEmpty(BrandName))
+            {
+                sb.AppendLine("    <div class=\"brand-header\">");
+                if (!string.IsNullOrEmpty(BrandLogoDataUri))
+                {
+                    sb.AppendLine($"      <img class=\"brand-logo-img\" src=\"{BrandLogoDataUri}\" alt=\"{Encode(BrandName)}\" />");
+                }
+                if (!string.IsNullOrEmpty(BrandName))
+                {
+                    sb.AppendLine($"      <div class=\"brand-title\">{Encode(BrandName)}</div>");
+                }
+                sb.AppendLine("    </div>");
+            }
             sb.AppendLine(navigationHtml);
             sb.AppendLine("  </nav>");
             sb.AppendLine("  <main class=\"content\">");
@@ -55,6 +131,34 @@ namespace PowerDocu.Common
             sb.AppendLine("    parent.classList.toggle('collapsed');");
             sb.AppendLine("  });");
             sb.AppendLine("});");
+            sb.AppendLine("</script>");
+            // Active-page highlighting: compares each nav link's target file/anchor against
+            // the current page, so the sidebar shows which page/section is currently open.
+            // Client-side because the same nav HTML is reused as-is across every page linking
+            // to it, and per-page files can be nested at varying folder depths.
+            sb.AppendLine("<script>");
+            sb.AppendLine("(function(){");
+            sb.AppendLine("  function currentFile(){ return window.location.pathname.split('/').pop() || 'index.html'; }");
+            sb.AppendLine("  function updateActiveNav(){");
+            sb.AppendLine("    var file = currentFile();");
+            sb.AppendLine("    var hash = window.location.hash;");
+            sb.AppendLine("    document.querySelectorAll('.nav-list a').forEach(function(a){");
+            sb.AppendLine("      var href = a.getAttribute('href') || '';");
+            sb.AppendLine("      var hashIdx = href.indexOf('#');");
+            sb.AppendLine("      var hrefFile = hashIdx >= 0 ? href.substring(0, hashIdx) : href;");
+            sb.AppendLine("      var hrefHash = hashIdx >= 0 ? href.substring(hashIdx) : '';");
+            sb.AppendLine("      if (hrefFile === '') hrefFile = file;");
+            sb.AppendLine("      var isActive = (hrefFile === file) && (hrefHash === hash);");
+            sb.AppendLine("      a.classList.toggle('active', isActive);");
+            sb.AppendLine("      if (isActive){");
+            sb.AppendLine("        var parent = a.closest('.nav-parent');");
+            sb.AppendLine("        while (parent){ parent.classList.remove('collapsed'); parent = parent.parentElement ? parent.parentElement.closest('.nav-parent') : null; }");
+            sb.AppendLine("      }");
+            sb.AppendLine("    });");
+            sb.AppendLine("  }");
+            sb.AppendLine("  updateActiveNav();");
+            sb.AppendLine("  window.addEventListener('hashchange', updateActiveNav);");
+            sb.AppendLine("})();");
             sb.AppendLine("</script>");
             sb.AppendLine("</body>");
             sb.AppendLine("</html>");
@@ -195,10 +299,130 @@ namespace PowerDocu.Common
             sb.AppendLine("<ul class=\"nav-list\">");
             foreach (var item in items)
             {
-                sb.AppendLine($"  <li><a href=\"{Encode(item.href)}\">{Encode(item.label)}</a></li>");
+                bool isTech = IsTechNavItem(item.label, out string techIcon);
+                string liClass = isTech ? " class=\"nav-tech\"" : "";
+                sb.AppendLine($"  <li{liClass}><a href=\"{Encode(item.href)}\">{RenderNavLinkInner(item.label, isTech, techIcon)}</a></li>");
             }
             sb.AppendLine("</ul>");
             return sb.ToString();
+        }
+
+        // ------------------------------------------------------------------
+        // "Technology" nav items — the main building blocks of a solution
+        // (Flows, Apps, Agents, Tables, and reserved for a future SharePoint
+        // section), shown bigger with an icon in the sidebar.
+        //
+        // Icon sourcing, in priority order:
+        //  1. A real connector icon PowerDocu already downloads/caches via
+        //     ConnectorHelper (e.g. the actual Dataverse/SharePoint icons used
+        //     elsewhere for connector references) — used when available.
+        //  2. An icon PowerDocu already ships inline elsewhere in the codebase
+        //     (AgentIcon.cs — used for Copilot Studio topic diagrams), reused
+        //     here for visual consistency rather than inventing a new one.
+        //  3. A small generic placeholder glyph as a last resort, for
+        //     Flows/Apps/Tables/SharePoint labels neither of the above
+        //     currently cover (there's no official "Power Apps" icon anywhere
+        //     in this codebase, and connector icons are only present once
+        //     downloaded via `PowerDocu.exe -i` at least once).
+        // ------------------------------------------------------------------
+
+        // Real connector icons ConnectorHelper already knows how to fetch/cache —
+        // reuse them instead of drawing new ones.
+        private static readonly Dictionary<string, string> TechConnectorIconNames = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Tables"] = "commondataservice", // Microsoft Dataverse
+            ["SharePoint"] = "sharepointonline",
+            ["Apps"] = "powertools", // real Power Apps logo, cached under the "Microsoft Power Apps" connector entry
+        };
+
+        // Real Microsoft product logos shipped as a Resources file (not fetched via
+        // ConnectorHelper, since these aren't "connectors") — path resolved the same
+        // way ConfigHelper resolves brandLogoPath.
+        private static readonly Dictionary<string, string> TechResourceIcons = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Flows"] = AssemblyHelper.GetExecutablePath() + @"\Resources\PowerAutomateLogo.png",
+        };
+
+        // Icons PowerDocu already draws inline elsewhere (AgentIcon.cs), reused as-is.
+        private static readonly Dictionary<string, string> TechReusedIcons = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Agents"] = AddViewBoxIfMissing(AgentIcon.MessageIcon, "0 0 20 20"),
+        };
+
+        // Last-resort generic glyphs, used only when neither of the above apply.
+        private static readonly Dictionary<string, string> TechFallbackIcons = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Apps"] = "<svg viewBox=\"0 0 24 24\"><rect x=\"3\" y=\"3\" width=\"8\" height=\"8\" rx=\"1.5\"/><rect x=\"13\" y=\"3\" width=\"8\" height=\"8\" rx=\"1.5\"/><rect x=\"3\" y=\"13\" width=\"8\" height=\"8\" rx=\"1.5\"/><rect x=\"13\" y=\"13\" width=\"8\" height=\"8\" rx=\"1.5\"/></svg>",
+            ["Tables"] = "<svg viewBox=\"0 0 24 24\"><path d=\"M12 3c-5 0-9 1.34-9 3v12c0 1.66 4 3 9 3s9-1.34 9-3V6c0-1.66-4-3-9-3zm0 2c4.42 0 7 1.06 7 1.5S16.42 8 12 8 5 6.94 5 6.5 7.58 5 12 5zm-7 3.65c1.53.85 4.16 1.35 7 1.35s5.47-.5 7-1.35v3.02c-1.53.85-4.16 1.35-7 1.35s-5.47-.5-7-1.35V8.65zm0 5.02c1.53.85 4.16 1.35 7 1.35s5.47-.5 7-1.35v3.02c-1.53.85-4.16 1.35-7 1.35s-5.47-.5-7-1.35v-3.02z\"/></svg>",
+            ["SharePoint"] = "<svg viewBox=\"0 0 24 24\"><path d=\"M3 5a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5z\"/></svg>",
+            // Only reached if PowerAutomateLogo.png is somehow missing from Resources\ (shouldn't happen on a normal build/publish).
+            ["Flows"] = AddViewBoxIfMissing(AgentIcon.FlowIcon, "0 0 20 20"),
+        };
+
+        /// <summary>
+        /// Some existing icon sources (e.g. <see cref="AgentIcon"/>) set only width/height
+        /// on their &lt;svg&gt;, no viewBox — fine as-is, but breaks when this nav rendering
+        /// later resizes the icon via CSS (content clips instead of scaling). Injects a
+        /// matching viewBox without altering anything else about the source icon.
+        /// </summary>
+        private static string AddViewBoxIfMissing(string svg, string viewBox)
+        {
+            if (string.IsNullOrEmpty(svg) || svg.Contains("viewBox")) return svg;
+            int gt = svg.IndexOf('>');
+            return gt < 0 ? svg : svg.Insert(gt, $" viewBox=\"{viewBox}\"");
+        }
+
+        private static string GetConnectorIconDataUri(string connectorUniqueName)
+        {
+            string path = ConnectorHelper.getConnectorIconFile(connectorUniqueName);
+            return GetFileIconDataUri(path);
+        }
+
+        private static string GetFileIconDataUri(string path)
+        {
+            if (string.IsNullOrEmpty(path) || !File.Exists(path)) return null;
+            string mimeType = Path.GetExtension(path).ToLowerInvariant() switch
+            {
+                ".png" => "image/png",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".svg" => "image/svg+xml",
+                _ => "image/png"
+            };
+            return $"data:{mimeType};base64,{ImageHelper.GetBase64(path)}";
+        }
+
+        private static bool IsTechNavItem(string label, out string iconMarkup)
+        {
+            iconMarkup = null;
+            if (label == null) return false;
+
+            if (TechConnectorIconNames.TryGetValue(label, out string connectorName))
+            {
+                string dataUri = GetConnectorIconDataUri(connectorName);
+                if (dataUri != null)
+                {
+                    iconMarkup = $"<img src=\"{dataUri}\" alt=\"\" />";
+                    return true;
+                }
+            }
+            if (TechResourceIcons.TryGetValue(label, out string resourcePath))
+            {
+                string dataUri = GetFileIconDataUri(resourcePath);
+                if (dataUri != null)
+                {
+                    iconMarkup = $"<img src=\"{dataUri}\" alt=\"\" />";
+                    return true;
+                }
+            }
+            if (TechReusedIcons.TryGetValue(label, out iconMarkup)) return true;
+            if (TechFallbackIcons.TryGetValue(label, out iconMarkup)) return true;
+            return false;
+        }
+
+        private static string RenderNavLinkInner(string label, bool isTech, string iconMarkup)
+        {
+            if (!isTech) return Encode(label);
+            return $"<span class=\"nav-tech-icon\">{iconMarkup}</span><span class=\"nav-tech-label\">{Encode(label)}</span>";
         }
 
         /// <summary>
@@ -215,10 +439,11 @@ namespace PowerDocu.Common
                 var item = list[i];
                 // Check if this item has children (next item is a higher level)
                 bool hasChildren = (i + 1 < list.Count) && (list[i + 1].level > item.level);
+                bool itemIsTech = IsTechNavItem(item.label, out string itemTechIcon);
                 if (hasChildren)
                 {
-                    sb.AppendLine($"  <li class=\"nav-parent collapsed\">");
-                    sb.AppendLine($"    <div class=\"nav-parent-row\"><a href=\"{Encode(item.href)}\">{Encode(item.label)}</a><button class=\"nav-toggle\" aria-label=\"Toggle\">&#9662;</button></div>");
+                    sb.AppendLine($"  <li class=\"nav-parent collapsed{(itemIsTech ? " nav-tech" : "")}\">");
+                    sb.AppendLine($"    <div class=\"nav-parent-row\"><a href=\"{Encode(item.href)}\">{RenderNavLinkInner(item.label, itemIsTech, itemTechIcon)}</a><button class=\"nav-toggle\" aria-label=\"Toggle\">&#9662;</button></div>");
                     int childLevel = list[i + 1].level;
                     sb.AppendLine($"    <ul class=\"nav-children\">");
                     i++;
@@ -227,10 +452,11 @@ namespace PowerDocu.Common
                         var child = list[i];
                         // Check if this child also has children
                         bool childHasChildren = (i + 1 < list.Count) && (list[i + 1].level > child.level);
+                        bool childIsTech = IsTechNavItem(child.label, out string childTechIcon);
                         if (childHasChildren && child.level == childLevel)
                         {
-                            sb.AppendLine($"      <li class=\"nav-parent collapsed\">");
-                            sb.AppendLine($"        <div class=\"nav-parent-row\"><a href=\"{Encode(child.href)}\">{Encode(child.label)}</a><button class=\"nav-toggle\" aria-label=\"Toggle\">&#9662;</button></div>");
+                            sb.AppendLine($"      <li class=\"nav-parent collapsed{(childIsTech ? " nav-tech" : "")}\">");
+                            sb.AppendLine($"        <div class=\"nav-parent-row\"><a href=\"{Encode(child.href)}\">{RenderNavLinkInner(child.label, childIsTech, childTechIcon)}</a><button class=\"nav-toggle\" aria-label=\"Toggle\">&#9662;</button></div>");
                             int grandchildLevel = list[i + 1].level;
                             sb.AppendLine($"        <ul class=\"nav-children\">");
                             i++;
@@ -245,7 +471,7 @@ namespace PowerDocu.Common
                         }
                         else
                         {
-                            sb.AppendLine($"      <li class=\"nav-sub-{child.level}\"><a href=\"{Encode(child.href)}\">{Encode(child.label)}</a></li>");
+                            sb.AppendLine($"      <li class=\"nav-sub-{child.level}{(childIsTech ? " nav-tech" : "")}\"><a href=\"{Encode(child.href)}\">{RenderNavLinkInner(child.label, childIsTech, childTechIcon)}</a></li>");
                         }
                         i++;
                     }
@@ -255,7 +481,7 @@ namespace PowerDocu.Common
                 }
                 else
                 {
-                    sb.AppendLine($"  <li><a href=\"{Encode(item.href)}\">{Encode(item.label)}</a></li>");
+                    sb.AppendLine($"  <li{(itemIsTech ? " class=\"nav-tech\"" : "")}><a href=\"{Encode(item.href)}\">{RenderNavLinkInner(item.label, itemIsTech, itemTechIcon)}</a></li>");
                 }
             }
             sb.AppendLine("</ul>");
@@ -455,7 +681,7 @@ namespace PowerDocu.Common
 
         public static string GetDefaultCss()
         {
-            return @"/* PowerDocu HTML Documentation Stylesheet
+            return @"/* Solutions Docs HTML Documentation Stylesheet
    Replace this file to change the visual appearance of the generated documentation. */
 
 :root {
@@ -506,6 +732,30 @@ body {
     overflow-y: auto;
 }
 
+.brand-header {
+    padding: 1rem 1.25rem 0.85rem;
+    text-align: left;
+    border-bottom: 1px solid var(--color-sidebar-hover);
+    margin-bottom: 0.75rem;
+}
+
+.brand-logo-img {
+    display: block;
+    max-width: 70%;
+    max-height: 24px;
+    border-radius: 0;
+    margin-bottom: 0.5rem;
+}
+
+.brand-title {
+    font-size: 0.95rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: #fff;
+    text-transform: uppercase;
+}
+
+/* Solution/component name — always show the full name, never clip it */
 .sidebar .nav-title {
     font-size: 1.1rem;
     font-weight: 600;
@@ -513,6 +763,47 @@ body {
     color: #fff;
     border-bottom: 1px solid var(--color-sidebar-hover);
     margin-bottom: 0.5rem;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    white-space: normal;
+    line-height: 1.3;
+}
+
+/* Technology nav sections (Flows, Apps, SharePoint, ...) — the main building
+   blocks of a solution, visually promoted above secondary metadata sections. */
+/* !important: Flows/Apps/SharePoint can render at any nesting depth (top-level or
+   nested inside the Solution Components group), and deeper nav-sub/nested-parent-row
+   rules elsewhere in this stylesheet have higher selector specificity. This class
+   should always win regardless of where it ends up in the tree. */
+.nav-tech > .nav-parent-row > a,
+.nav-tech > a {
+    font-size: 1rem !important;
+    font-weight: 700 !important;
+    padding-left: 1.25rem !important;
+}
+
+.nav-tech-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    margin-right: 0.6rem;
+    flex-shrink: 0;
+    vertical-align: middle;
+}
+
+.nav-tech-icon svg {
+    width: 100%;
+    height: 100%;
+    fill: currentColor;
+}
+
+.nav-tech-icon img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    border-radius: 0;
 }
 
 .nav-list {

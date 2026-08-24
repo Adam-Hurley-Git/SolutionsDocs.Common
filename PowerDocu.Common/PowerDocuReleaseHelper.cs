@@ -55,7 +55,7 @@ namespace PowerDocu.Common
         public static string GetTimestampWithVersion()
         {
             return DateTime.Now.ToLongDateString() + " " + DateTime.Now.ToShortTimeString()
-                   + " with PowerDocu version " + PowerDocuReleaseHelper.GetVersion();
+                   + " with Solutions Docs version " + PowerDocuReleaseHelper.GetVersion();
         }
 
         public static async Task<bool> HasNewerPowerDocuRelease()

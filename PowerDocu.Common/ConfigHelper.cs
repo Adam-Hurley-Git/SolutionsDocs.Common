@@ -31,6 +31,15 @@ namespace PowerDocu.Common
         public bool addTableOfContents = false;
         public bool showAllComponentsInGraph = true;
         public bool checkForUpdatesOnLaunch = true;
+        // Branding: customise the look of generated HTML output without touching code.
+        // Defaults below are this fork's Atlas Copco branding; the mechanism itself
+        // (ConfigHelper fields -> HtmlBuilder.ApplyBranding) stays generic, so swapping
+        // to a different brand later only means changing these values / powerdocu.config.json.
+        public string brandName = "Solutions Docs";
+        public string brandLogoPath = AssemblyHelper.GetExecutablePath() + @"\Resources\BrandLogo.svg";
+        public string brandAccentColor = "#006F8F";
+        public string brandAccentColorDark = "#00536B";
+        public string brandSidebarColor = "#1e1e2e";
         private string configFile = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData) + @"\" + AssemblyHelper.GetApplicationName() + @"\powerdocu.config.json";
 
         public ConfigHelper()
@@ -70,6 +79,11 @@ namespace PowerDocu.Common
                     addTableOfContents = config.addTableOfContents;
                     showAllComponentsInGraph = config.showAllComponentsInGraph;
                     checkForUpdatesOnLaunch = config.checkForUpdatesOnLaunch;
+                    brandName = config.brandName;
+                    brandLogoPath = config.brandLogoPath;
+                    brandAccentColor = config.brandAccentColor;
+                    brandAccentColorDark = config.brandAccentColorDark;
+                    brandSidebarColor = config.brandSidebarColor;
                 }
             }
         }
